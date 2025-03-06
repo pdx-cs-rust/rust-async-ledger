@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::bail;
 use tokio::{
@@ -8,24 +9,27 @@ use tokio::{
     sync::Mutex,
 };
 
-type Ledger = HashMap<String, i64>;
+#[allow(unused)]
+struct Ledger {
+    book: HashMap<String, i64>,
+    admin_key: String,
+}
 
 async fn process_client<R>(
     mut client: R,
-    _admin_key: &str,
-    _ledger: &Mutex<Ledger>,
+    _ledger: Arc<Mutex<Ledger>>,
 ) -> anyhow::Result<()>
 where R: AsyncBufReadExt + AsyncWriteExt + Unpin
 {
     let mut request = String::new();
     client.read_line(&mut request).await?;
     let request = request.trim();
-    eprintln!("request: {}", request);
     let fields: Vec<&str> = request.split_whitespace().collect();
     let fields: &[&str] = fields.as_ref();
+    eprintln!("request: {:?}", fields);
     match fields {
-        &["echo"] => {
-            let reply: String = fields.join(" ");
+        ["echo", ..] => {
+            let reply: String = fields[1..].join(" ") + "\r\n";
             client.write_all(reply.as_bytes()).await?;
         }
         _ => bail!("unknown request"),
@@ -36,15 +40,19 @@ where R: AsyncBufReadExt + AsyncWriteExt + Unpin
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let admin_key = tokio::fs::read_to_string("admin-key.txt").await?;
-    let admin_key = admin_key.trim();
-    let ledger: Mutex<Ledger> = Mutex::new(HashMap::new());
+    let admin_key = admin_key.trim().into();
+    let book = HashMap::new();
+    let ledger = Ledger { admin_key, book };
+    let ledger = Arc::new(Mutex::new(ledger));
     let listener = TcpListener::bind("localhost:12354").await?;
+
     loop {
         let (client, addr) = listener.accept().await?;
         eprintln!("new client: {}", addr);
         let client = BufReader::new(client);
+        let ledger = Arc::clone(&ledger);
         tokio::spawn(async move {
-            process_client(client, &admin_key, &ledger).await.unwrap();
+            process_client(client, ledger).await.unwrap();
         });
     }
 }
