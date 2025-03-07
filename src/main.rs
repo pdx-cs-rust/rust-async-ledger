@@ -52,6 +52,16 @@ async fn process_client(
                 }
                 ledger.book.insert(account.to_string(), 0);
             }
+            ["balance"] => {
+                let account = check_authorized(&auth)?;
+                let ledger = ledger.lock().await;
+                if let Some(balance) = ledger.book.get(account) {
+                    let reply = format!("{}\r\n", balance);
+                    cw.write_all(reply.as_bytes()).await?;
+                } else {
+                    bail!("balance of non-existing account");
+                }
+            }
             ["delete"] => {
                 let account = check_authorized(&auth)?;
                 let mut ledger = ledger.lock().await;
