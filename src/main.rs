@@ -53,6 +53,16 @@ async fn process_client(
                     bail!("delete of non-existing account");
                 }
             }
+            ["alter", key, account, alter] => {
+                let alter: i64 = alter.parse()?;
+                let mut ledger = ledger.lock().await;
+                check_key(&ledger.admin_key, key)?;
+                if let Some(value) = ledger.book.get_mut(*account) {
+                    *value += alter;
+                } else {
+                    bail!("alter of non-existing account");
+                }
+            }
             ["echo", ..] => {
                 let reply: String = fields[1..].join(" ") + "\r\n";
                 cw.write_all(reply.as_bytes()).await?;
