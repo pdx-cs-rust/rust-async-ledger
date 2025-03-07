@@ -18,46 +18,57 @@ async fn process_client(
     client: TcpStream,
     ledger: Arc<Mutex<Ledger>>,
 ) -> anyhow::Result<()> {
-    fn check_key(good: &str, test: &str) -> anyhow::Result<()> {
-        if good == test {
-            Ok(())
-        } else {
-            bail!("illegal admin key")
-        }
-    }
-
+    let mut auth: Option<String> = None;
     let (cr, mut cw) = client.into_split();
     let cr = BufReader::new(cr);
     let mut lines = cr.lines();
+
+    fn check_authorized(a: &Option<String>) -> Result<&str, anyhow::Error> {
+        if let Some(account) = a {
+            Ok(account)
+        } else {
+            bail!("unauthorized request")
+        }
+    }
+
     while let Some(request) = lines.next_line().await? {
         let request = request.trim();
         let fields: Vec<&str> = request.split_whitespace().collect();
         let fields: &[&str] = fields.as_ref();
         match fields {
-            ["init", key, account] => {
+            ["auth", key, account] => {
+                let ledger = ledger.lock().await;
+                if *key == ledger.admin_key {
+                    auth = Some(account.to_string());
+                } else {
+                    bail!("failed auth");
+                }
+            }
+            ["init"] => {
+                let account = check_authorized(&auth)?;
                 let mut ledger = ledger.lock().await;
-                check_key(&ledger.admin_key, key)?;
-                if ledger.book.contains_key(*account) {
+                if ledger.book.contains_key(account) {
                     bail!("init of existing account");
                 }
                 ledger.book.insert(account.to_string(), 0);
             }
-            ["delete", key, account] => {
+            ["delete"] => {
+                let account = check_authorized(&auth)?;
                 let mut ledger = ledger.lock().await;
-                check_key(&ledger.admin_key, key)?;
-                if let Some(balance) = ledger.book.get(*account) {
+                if let Some(balance) = ledger.book.get(account) {
                     let reply = format!("{}\r\n", balance);
-                    ledger.book.remove(*account);
+                    ledger.book.remove(account);
                     cw.write_all(reply.as_bytes()).await?;
+                    auth = None;
                 } else {
                     bail!("delete of non-existing account");
                 }
             }
-            ["alter", key, account, alter] => {
+            ["alter", alter] => {
+                let account = check_authorized(&auth)?;
                 let alter: i64 = alter.parse()?;
                 let mut ledger = ledger.lock().await;
-                check_key(&ledger.admin_key, key)?;
-                if let Some(value) = ledger.book.get_mut(*account) {
+                if let Some(value) = ledger.book.get_mut(account) {
                     *value += alter;
                 } else {
                     bail!("alter of non-existing account");
