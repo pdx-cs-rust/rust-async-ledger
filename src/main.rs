@@ -5,7 +5,7 @@ use anyhow::bail;
 use tokio::{
     self,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::Mutex,
 };
 
@@ -14,12 +14,10 @@ struct Ledger {
     admin_key: String,
 }
 
-async fn process_client<R>(
-    mut client: R,
+async fn process_client(
+    client: TcpStream,
     ledger: Arc<Mutex<Ledger>>,
-) -> anyhow::Result<()>
-where R: AsyncBufReadExt + AsyncWriteExt + Unpin
-{
+) -> anyhow::Result<()> {
     fn check_key(good: &str, test: &str) -> anyhow::Result<()> {
         if good == test {
             Ok(())
@@ -28,36 +26,42 @@ where R: AsyncBufReadExt + AsyncWriteExt + Unpin
         }
     }
 
-    let mut request = String::new();
-    client.read_line(&mut request).await?;
-    let request = request.trim();
-    let fields: Vec<&str> = request.split_whitespace().collect();
-    let fields: &[&str] = fields.as_ref();
-    match fields {
-        ["init", key, account] => {
-            let mut ledger = ledger.lock().await;
-            check_key(&ledger.admin_key, key)?;
-            if ledger.book.contains_key(*account) {
-                bail!("init of existing account");
+    let (cr, mut cw) = client.into_split();
+    let cr = BufReader::new(cr);
+    let mut lines = cr.lines();
+    while let Some(request) = lines.next_line().await? {
+        let request = request.trim();
+        let fields: Vec<&str> = request.split_whitespace().collect();
+        let fields: &[&str] = fields.as_ref();
+        match fields {
+            ["init", key, account] => {
+                let mut ledger = ledger.lock().await;
+                check_key(&ledger.admin_key, key)?;
+                if ledger.book.contains_key(*account) {
+                    bail!("init of existing account");
+                }
+                ledger.book.insert(account.to_string(), 0);
             }
-            ledger.book.insert(account.to_string(), 0);
-        }
-        ["delete", key, account] => {
-            let mut ledger = ledger.lock().await;
-            check_key(&ledger.admin_key, key)?;
-            if let Some(balance) = ledger.book.get(*account) {
-                let reply = format!("{}\r\n", balance);
-                ledger.book.remove(*account);
-                client.write_all(reply.as_bytes()).await?;
-            } else {
-                bail!("delete of non-existing account");
+            ["delete", key, account] => {
+                let mut ledger = ledger.lock().await;
+                check_key(&ledger.admin_key, key)?;
+                if let Some(balance) = ledger.book.get(*account) {
+                    let reply = format!("{}\r\n", balance);
+                    ledger.book.remove(*account);
+                    cw.write_all(reply.as_bytes()).await?;
+                } else {
+                    bail!("delete of non-existing account");
+                }
             }
+            ["echo", ..] => {
+                let reply: String = fields[1..].join(" ") + "\r\n";
+                cw.write_all(reply.as_bytes()).await?;
+            }
+            ["exit"] => {
+                break;
+            }
+            _ => bail!("unknown request"),
         }
-        ["echo", ..] => {
-            let reply: String = fields[1..].join(" ") + "\r\n";
-            client.write_all(reply.as_bytes()).await?;
-        }
-        _ => bail!("unknown request"),
     }
     Ok(())
 }
@@ -74,7 +78,6 @@ async fn main() -> anyhow::Result<()> {
     loop {
         let (client, addr) = listener.accept().await?;
         eprintln!("new client: {}", addr);
-        let client = BufReader::new(client);
         let ledger = Arc::clone(&ledger);
         tokio::spawn(async move {
             process_client(client, ledger).await.unwrap_or_else(|e| {
