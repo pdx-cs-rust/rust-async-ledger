@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use tokio::{
     self,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -79,7 +79,9 @@ async fn process_client(
                 let alter: i64 = alter.parse()?;
                 let mut ledger = ledger.lock().await;
                 if let Some(value) = ledger.book.get_mut(account) {
-                    *value += alter;
+                    *value = value
+                        .checked_add(alter)
+                        .ok_or(anyhow!("balance overflow/underflow"))?;
                 } else {
                     bail!("alter of non-existing account");
                 }
