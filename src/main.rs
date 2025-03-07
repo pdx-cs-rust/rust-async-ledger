@@ -33,7 +33,6 @@ where R: AsyncBufReadExt + AsyncWriteExt + Unpin
     let request = request.trim();
     let fields: Vec<&str> = request.split_whitespace().collect();
     let fields: &[&str] = fields.as_ref();
-    eprintln!("request: {:?}", fields);
     match fields {
         ["init", key, account] => {
             let mut ledger = ledger.lock().await;
@@ -42,6 +41,17 @@ where R: AsyncBufReadExt + AsyncWriteExt + Unpin
                 bail!("init of existing account");
             }
             ledger.book.insert(account.to_string(), 0);
+        }
+        ["delete", key, account] => {
+            let mut ledger = ledger.lock().await;
+            check_key(&ledger.admin_key, key)?;
+            if let Some(balance) = ledger.book.get(*account) {
+                let reply = format!("{}\r\n", balance);
+                ledger.book.remove(*account);
+                client.write_all(reply.as_bytes()).await?;
+            } else {
+                bail!("delete of non-existing account");
+            }
         }
         ["echo", ..] => {
             let reply: String = fields[1..].join(" ") + "\r\n";
