@@ -67,7 +67,9 @@ async fn main() -> anyhow::Result<()> {
         let client = BufReader::new(client);
         let ledger = Arc::clone(&ledger);
         tokio::spawn(async move {
-            process_client(client, ledger).await.unwrap();
+            process_client(client, ledger).await.unwrap_or_else(|e| {
+                eprintln!("{}: failed transaction: {}", addr, e)
+            });
         });
     }
 }
