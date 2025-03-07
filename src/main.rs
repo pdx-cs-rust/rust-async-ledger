@@ -9,7 +9,6 @@ use tokio::{
     sync::Mutex,
 };
 
-#[allow(unused)]
 struct Ledger {
     book: HashMap<String, i64>,
     admin_key: String,
@@ -17,10 +16,18 @@ struct Ledger {
 
 async fn process_client<R>(
     mut client: R,
-    _ledger: Arc<Mutex<Ledger>>,
+    ledger: Arc<Mutex<Ledger>>,
 ) -> anyhow::Result<()>
 where R: AsyncBufReadExt + AsyncWriteExt + Unpin
 {
+    fn check_key(good: &str, test: &str) -> anyhow::Result<()> {
+        if good == test {
+            Ok(())
+        } else {
+            bail!("illegal admin key")
+        }
+    }
+
     let mut request = String::new();
     client.read_line(&mut request).await?;
     let request = request.trim();
@@ -28,6 +35,14 @@ where R: AsyncBufReadExt + AsyncWriteExt + Unpin
     let fields: &[&str] = fields.as_ref();
     eprintln!("request: {:?}", fields);
     match fields {
+        ["init", key, account] => {
+            let mut ledger = ledger.lock().await;
+            check_key(&ledger.admin_key, key)?;
+            if ledger.book.contains_key(*account) {
+                bail!("init of existing account");
+            }
+            ledger.book.insert(account.to_string(), 0);
+        }
         ["echo", ..] => {
             let reply: String = fields[1..].join(" ") + "\r\n";
             client.write_all(reply.as_bytes()).await?;
