@@ -10,13 +10,25 @@ use tokio::{
     sync::Mutex,
 };
 
-#[derive(Debug)]
 struct Ledger {
     book: HashMap<String, i64>,
     admin_key: String,
 }
 
-async fn writeln<F, D>(
+macro_rules! writeln {
+    ($f:expr) => {
+        $f.write_all(b"\r\n")
+    };
+    ($f:expr, $fmt:literal) => {
+        $f.write_all(format!($fmt).as_bytes())
+    };
+    ($f:expr, $fmt:literal, $($vs:expr),*) => {
+        $f.write_all(format!($fmt, $($vs),*).as_bytes())
+    };
+}
+
+#[allow(unused)]
+async fn old_writeln<F, D>(
     f: &mut F,
     message: D,
 ) -> Result<(), tokio::io::Error>
@@ -69,7 +81,7 @@ async fn process_client(
                 let account = check_authorized(&auth)?;
                 let ledger = ledger.lock().await;
                 if let Some(balance) = ledger.book.get(account) {
-                    writeln(&mut cw, balance).await?;
+                    writeln!(cw, "{}", balance).await?;
                 } else {
                     bail!("balance of non-existing account");
                 }
@@ -80,7 +92,7 @@ async fn process_client(
                 if let Some(balance) = ledger.book.get(account) {
                     let balance = *balance;
                     ledger.book.remove(account);
-                    writeln(&mut cw, balance).await?;
+                    writeln!(cw, "{}", balance).await?;
                     auth = None;
                 } else {
                     bail!("delete of non-existing account");
@@ -100,7 +112,7 @@ async fn process_client(
             }
             ["echo", ..] => {
                 let reply: String = fields[1..].join(" ");
-                writeln(&mut cw, &reply).await?;
+                writeln!(cw, "{}", &reply).await?;
             }
             ["exit"] => {
                 break;
