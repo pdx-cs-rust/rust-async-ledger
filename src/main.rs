@@ -1,17 +1,30 @@
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use tokio::{
     self,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
 
+#[derive(Debug)]
 struct Ledger {
     book: HashMap<String, i64>,
     admin_key: String,
+}
+
+async fn writeln<F, D>(
+    f: &mut F,
+    message: D,
+) -> Result<(), tokio::io::Error>
+where F: AsyncWrite + Unpin, D: Display
+{
+    let s = format!("{}", message);
+    f.write_all(s.as_bytes()).await?;
+    f.write_all(b"\r\n").await
 }
 
 async fn process_client(
@@ -56,8 +69,7 @@ async fn process_client(
                 let account = check_authorized(&auth)?;
                 let ledger = ledger.lock().await;
                 if let Some(balance) = ledger.book.get(account) {
-                    let reply = format!("{}\r\n", balance);
-                    cw.write_all(reply.as_bytes()).await?;
+                    writeln(&mut cw, balance).await?;
                 } else {
                     bail!("balance of non-existing account");
                 }
@@ -66,9 +78,9 @@ async fn process_client(
                 let account = check_authorized(&auth)?;
                 let mut ledger = ledger.lock().await;
                 if let Some(balance) = ledger.book.get(account) {
-                    let reply = format!("{}\r\n", balance);
+                    let balance = *balance;
                     ledger.book.remove(account);
-                    cw.write_all(reply.as_bytes()).await?;
+                    writeln(&mut cw, balance).await?;
                     auth = None;
                 } else {
                     bail!("delete of non-existing account");
@@ -87,8 +99,8 @@ async fn process_client(
                 }
             }
             ["echo", ..] => {
-                let reply: String = fields[1..].join(" ") + "\r\n";
-                cw.write_all(reply.as_bytes()).await?;
+                let reply: String = fields[1..].join(" ");
+                writeln(&mut cw, &reply).await?;
             }
             ["exit"] => {
                 break;
