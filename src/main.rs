@@ -19,10 +19,10 @@ macro_rules! writeln {
     ($f:expr) => {
         $f.write_all(b"\r\n")
     };
-    ($f:expr, $fmt:literal) => {
+    ($f:expr, $fmt:literal $(,)?) => {
         $f.write_all(format!($fmt).as_bytes())
     };
-    ($f:expr, $fmt:literal, $($vs:expr),*) => {
+    ($f:expr, $fmt:literal, $($vs:expr),* $(,)?) => {
         $f.write_all(format!($fmt, $($vs),*).as_bytes())
     };
 }
